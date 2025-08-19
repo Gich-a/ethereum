@@ -1,0 +1,20 @@
+//
+// These queries are for the real-time dashboard.
+// They provide quick, recent snapshots of key Ethereum metrics.
+//
+
+// Query 1: Latest Ethereum Price
+GetLatestEthereumPrice()
+
+// Query 2: Last 60 minutes of gas price
+EthereumGas
+| where Timestamp > ago(60m)
+| summarize d_gas_price = avg(GasPrice) by bin(Timestamp, 1m)
+| render timechart
+
+// Query 3: Real-time Block Rate
+EthereumEvents
+| where EventType == "NewBlock"
+| where Timestamp > ago(10m)
+| summarize BlockCount = count() by bin(Timestamp, 10s)
+| render timechart

@@ -1,0 +1,113 @@
+# .azure-pipelines/deploy.yml
+trigger: none
+
+resources:
+  pipelines:
+  - pipeline: build
+    source: ethereum-dashboard-build
+    trigger: 
+      branches:
+        include:
+        - main
+
+variables:
+  - group: ethereum-dashboard-vars
+  - name: terraformVersion
+    value: '1.5.0'
+
+stages:
+- stage: Deploy_Dev
+  displayName: 'Deploy to Development'
+  condition: eq(variables['Build.SourceBranch'], 'refs/heads/develop')
+  variables:
+    environment: 'dev'
+  jobs:
+  - deployment: DeployInfrastructure
+    displayName: 'Deploy Infrastructure'
+    environment: 'ethereum-dashboard-dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: build
+            artifact: ethereum-dashboard
+          
+          - task: TerraformInstaller@0
+            inputs:
+              terraformVersion: '$(terraformVersion)'
+          
+          - script: |
+              cd $(Pipeline.Workspace)/build/ethereum-dashboard/deploy/terraform
+              terraform init
+              terraform plan -var="environment=$(environment)" -out=tfplan
+            displayName: 'Terraform Plan'
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+          
+          - script: |
+              cd $(Pipeline.Workspace)/build/ethereum-dashboard/deploy/terraform
+              terraform apply tfplan
+            displayName: 'Terraform Apply'
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+  - deployment: DeployApplication
+    displayName: 'Deploy Application'
+    dependsOn: DeployInfrastructure
+    environment: 'ethereum-dashboard-dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: build
+            artifact: ethereum-dashboard
+          
+          - task: PythonScript@0
+            inputs:
+              scriptSource: filePath
+              scriptPath: '$(Pipeline.Workspace)/build/ethereum-dashboard/deploy/scripts/setup_eventhouse.py'
+            displayName: 'Setup Eventhouse'
+          
+          - task: PythonScript@0
+            inputs:
+              scriptSource: filePath
+              scriptPath: '$(Pipeline.Workspace)/build/ethereum-dashboard/deploy/scripts/setup_lakehouse.py'
+            displayName: 'Setup Lakehouse'
+
+- stage: Deploy_Prod
+  displayName: 'Deploy to Production'
+  condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+  variables:
+    environment: 'prod'
+  jobs:
+  - deployment: DeployProduction
+    displayName: 'Deploy to Production'
+    environment: 'ethereum-dashboard-prod'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: build
+            artifact: ethereum-dashboard
+          
+          - task: TerraformInstaller@0
+            inputs:
+              terraformVersion: '$(terraformVersion)'
+          
+          - script: |
+              cd $(Pipeline.Workspace)/build/ethereum-dashboard/deploy/terraform
+              terraform init
+              terraform plan -var="environment=$(environment)" -out=tfplan
+              terraform apply tfplan
+            displayName: 'Deploy Infrastructure'
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)

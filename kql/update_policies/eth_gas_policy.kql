@@ -1,0 +1,5 @@
+//
+// This KQL update policy ingests data from the Event Hub into the EthereumGas table.
+// It extracts the gas price from the raw data.
+//
+.alter table EthereumGas policy update @'[{"Source": "EventHub", "Kind": "UpdatePolicy", "Query": "EthereumEvents | where EventType == \"GasPrice\" | project Timestamp, GasPrice=toint(Data.gas_price_gwei)", "IsEnabled": "true"}]'

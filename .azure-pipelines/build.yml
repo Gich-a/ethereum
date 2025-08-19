@@ -1,0 +1,85 @@
+# .azure-pipelines/build.yml
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    exclude:
+    - README.md
+    - docs/*
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.9'
+  
+stages:
+- stage: Test
+  displayName: 'Test Stage'
+  jobs:
+  - job: TestPython
+    displayName: 'Test Python Components'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+      displayName: 'Use Python $(pythonVersion)'
+    
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+      displayName: 'Install dependencies'
+    
+    - script: |
+        pytest tests/unit/ --junitxml=junit/test-results.xml --cov=data-collector --cov-report=xml
+      displayName: 'Run unit tests'
+    
+    - script: |
+        pytest tests/integration/ --junitxml=junit/integration-results.xml
+      displayName: 'Run integration tests'
+    
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFiles: 'junit/*.xml'
+        testRunTitle: 'Python Tests'
+    
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: 'coverage.xml'
+
+- stage: Build
+  displayName: 'Build Stage'
+  dependsOn: Test
+  jobs:
+  - job: BuildArtifacts
+    displayName: 'Build Artifacts'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+    
+    - script: |
+        pip install wheel
+        python setup.py bdist_wheel
+      displayName: 'Build Python packages'
+    
+    - task: CopyFiles@2
+      inputs:
+        contents: |
+          data-collector/**
+          lakehouse/**
+          kql/**
+          dashboard/**
+          deploy/**
+          monitor/**
+        targetFolder: '$(Build.ArtifactStagingDirectory)'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'ethereum-dashboard'

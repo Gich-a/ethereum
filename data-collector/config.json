@@ -1,0 +1,47 @@
+{
+  "mode": "continuous",
+  "collection_interval": 300,
+  "etherscan": {
+    "api_key": "$P491NSGXRBURTIXI6WPK3AQIXP29TG8SU7",
+    "rate_limit_per_second": 5
+  },
+  "kusto": {
+    "cluster_uri": "https://your-cluster.kusto.windows.net",
+    "database": "ethereum_data"
+  },
+  "erc20_contracts": [
+    {
+      "name": "USDT",
+      "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "decimals": 6
+    },
+    {
+      "name": "USDC",
+      "address": "0xA0b86a33E6441986C3a3E95c9B95f5d9ed87D8b",
+      "decimals": 6
+    },
+    {
+      "name": "DAI",
+      "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "decimals": 18
+    },
+    {
+      "name": "WETH",
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "decimals": 18
+    }
+  ],
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  },
+  "retry": {
+    "max_attempts": 3,
+    "backoff_factor": 2
+  },
+  "data_quality": {
+    "enable_validation": true,
+    "max_price_change_threshold": 0.5,
+    "max_gas_price_gwei": 1000
+  }
+}

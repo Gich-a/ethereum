@@ -1,0 +1,101 @@
+//
+// This KQL function retrieves the latest Ethereum price from the Events table.
+// It is used to get the most recent price for real-time dashboards and reports.
+//
+//.create-or-alter function with (folder='Functions') GetLatestEthereumPrice() {
+//    EthereumEvents
+//    | where EventType == "EthereumPrice"
+//    | top 1 by Timestamp desc
+//    | project Timestamp, Price
+//}
+
+
+
+
+// kql/functions/get_latest_price.kql
+// Function to get the latest Ethereum price with optional time window
+
+.create-or-alter function GetLatestPrice(lookback_minutes: int = 5) {
+    eth_price_raw
+    | where timestamp >= ago(lookback_minutes * 1m)
+    | top 1 by timestamp desc
+    | project 
+        latest_price = price_usd,
+        latest_timestamp = timestamp,
+        market_cap,
+        volume_24h,
+        change_24h,
+        price_age_minutes = datetime_diff('minute', timestamp, now())
+}
+
+// Usage examples:
+// GetLatestPrice()              // Latest price within 5 minutes
+// GetLatestPrice(30)            // Latest price within 30 minutes
+
+// Function to get price with trend analysis
+.create-or-alter function GetPriceWithTrend(hours_back: int = 24) {
+    let latest_price = toscalar(
+        eth_price_raw
+        | top 1 by timestamp desc
+        | project price_usd
+    );
+    let price_history = 
+        eth_price_raw
+        | where timestamp >= ago(hours_back * 1h)
+        | summarize 
+            min_price = min(price_usd),
+            max_price = max(price_usd),
+            avg_price = avg(price_usd),
+            price_start = arg_min(price_usd, timestamp),
+            price_end = arg_max(price_usd, timestamp)
+        | extend
+            price_range = max_price - min_price,
+            price_change = price_end - price_start,
+            price_change_pct = (price_end - price_start) / price_start * 100,
+            volatility = (max_price - min_price) / avg_price * 100;
+    price_history
+    | extend 
+        current_price = latest_price,
+        trend_direction = case(
+            price_change_pct > 2, "Strong Up",
+            price_change_pct > 0.5, "Up", 
+            price_change_pct > -0.5, "Sideways",
+            price_change_pct > -2, "Down",
+            "Strong Down"
+        ),
+        volatility_level = case(
+            volatility < 2, "Low",
+            volatility < 5, "Medium",
+            volatility < 10, "High",
+            "Extreme"
+        )
+}
+
+// Function to get price alerts
+.create-or-alter function GetPriceAlerts(
+    lower_threshold: real = 1800.0,
+    upper_threshold: real = 2200.0,
+    minutes_back: int = 60
+) {
+    eth_price_raw
+    | where timestamp >= ago(minutes_back * 1m)
+    | extend 
+        alert_type = case(
+            price_usd <= lower_threshold, "Price Below Threshold",
+            price_usd >= upper_threshold, "Price Above Threshold",
+            "Normal"
+        ),
+        threshold_breach = price_usd <= lower_threshold or price_usd >= upper_threshold
+    | where threshold_breach
+    | project 
+        timestamp,
+        price_usd,
+        alert_type,
+        lower_threshold,
+        upper_threshold,
+        deviation_pct = case(
+            price_usd <= lower_threshold, (lower_threshold - price_usd) / lower_threshold * 100,
+            (price_usd - upper_threshold) / upper_threshold * 100
+        )
+    | order by timestamp desc
+}

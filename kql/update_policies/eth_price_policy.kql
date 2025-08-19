@@ -1,0 +1,5 @@
+//
+// This KQL update policy ingests data from the Event Hub into the EthereumPrices table.
+// It automatically transforms the raw JSON data on ingestion.
+//
+.alter table EthereumPrices policy update @'[{"Source": "EventHub", "Kind": "UpdatePolicy", "Query": "EthereumEvents | where EventType == \"EthereumPrice\" | project Timestamp, Price=tostring(Data.price_usd)", "Is)Enabled": "true"}]'

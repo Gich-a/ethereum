@@ -1,0 +1,23 @@
+//
+// These queries are for the batch analytics dashboard.
+// They analyze curated data from the Lakehouse for long-term trends.
+//
+// NOTE: These queries assume you have external tables pointing to your Lakehouse.
+
+// Query 1: Monthly average Ethereum price over the last year
+external_table('CuratedEthereumPrices')
+| where timestamp > ago(365d)
+| summarize AveragePrice = avg(price) by bin(timestamp, 30d)
+| render timechart
+
+// Query 2: Total number of transactions per month
+external_table('CuratedEthereumTransactions')
+| where timestamp > ago(365d)
+| summarize TransactionCount = count() by bin(timestamp, 30d)
+| render columnchart
+
+// Query 3: Top 10 users by transaction volume
+external_table('CuratedEthereumTransactions')
+| summarize TotalVolume = sum(value) by user_address
+| top 10 by TotalVolume
+| render piechart

@@ -1,0 +1,187 @@
+//
+// This KQL function calculates the average gas price over the last 15 minutes.
+// It helps in monitoring network congestion and transaction costs.
+//
+//.create-or-alter function with (folder='Functions') CalculateGasAverage() {
+//    EthereumEvents
+//    | where EventType == "GasPrice"
+//    | where Timestamp > ago(15m)
+//   | summarize avg(GasPrice) by bin(Timestamp, 1m)
+//    | order by Timestamp desc
+//}
+
+
+
+
+// kql/functions/calculate_gas_average.kql
+// Functions for calculating Ethereum gas price statistics and trends
+
+.create-or-alter function CalculateGasAverage(
+    window_minutes: int = 60,
+    gas_type: string = "fast"
+) {
+    let gas_column = case(
+        gas_type == "safe", "safe_gas_price",
+        gas_type == "standard", "standard_gas_price", 
+        "fast_gas_price"  // default to fast
+    );
+    eth_gas_raw
+    | where timestamp >= ago(window_minutes * 1m)
+    | extend gas_price_value = column_ifexists(gas_column, fast_gas_price)
+    | summarize 
+        avg_gas = avg(gas_price_value),
+        min_gas = min(gas_price_value),
+        max_gas = max(gas_price_value),
+        median_gas = percentile(gas_price_value, 50),
+        p90_gas = percentile(gas_price_value, 90),
+        p95_gas = percentile(gas_price_value, 95),
+        gas_volatility = stdev(gas_price_value),
+        data_points = count(),
+        window_start = min(timestamp),
+        window_end = max(timestamp)
+    | extend
+        gas_type = gas_type,
+        window_minutes = window_minutes,
+        volatility_coefficient = gas_volatility / avg_gas,
+        price_range_pct = (max_gas - min_gas) / avg_gas * 100
+}
+
+// Function to get gas price trends over multiple time periods
+.create-or-alter function GetGasTrends() {
+    let current_hour = 
+        eth_gas_raw
+        | where timestamp >= ago(1h)
+        | summarize avg_fast = avg(fast_gas_price);
+    let last_hour = 
+        eth_gas_raw
+        | where timestamp between (ago(2h) .. ago(1h))
+        | summarize avg_fast = avg(fast_gas_price);
+    let last_24h = 
+        eth_gas_raw
+        | where timestamp >= ago(24h)
+        | summarize avg_fast = avg(fast_gas_price);
+    let last_week = 
+        eth_gas_raw
+        | where timestamp >= ago(7d)
+        | summarize avg_fast = avg(fast_gas_price);
+    union
+        (current_hour | extend period = "Current Hour"),
+        (last_hour | extend period = "Previous Hour"),
+        (last_24h | extend period = "Last 24 Hours"), 
+        (last_week | extend period = "Last Week")
+    | project period, avg_fast_gas = round(avg_fast, 2)
+}
+
+// Function to categorize gas prices and provide recommendations
+.create-or-alter function GetGasRecommendations() {
+    let latest_gas = 
+        eth_gas_raw
+        | top 1 by timestamp desc
+        | project 
+            safe_gas_price, 
+            standard_gas_price, 
+            fast_gas_price,
+            timestamp;
+    let gas_history = 
+        eth_gas_raw
+        | where timestamp >= ago(24h)
+        | summarize 
+            avg_safe_24h = avg(safe_gas_price),
+            avg_standard_24h = avg(standard_gas_price),
+            avg_fast_24h = avg(fast_gas_price),
+            min_fast_24h = min(fast_gas_price),
+            p25_fast = percentile(fast_gas_price, 25),
+            p75_fast = percentile(fast_gas_price, 75);
+    latest_gas
+    | extend 
+        safe_category = case(
+            safe_gas_price < toscalar(gas_history | project p25_fast), "Very Low",
+            safe_gas_price < toscalar(gas_history | project avg_fast_24h) * 0.7, "Low",
+            safe_gas_price < toscalar(gas_history | project avg_fast_24h), "Medium",
+            safe_gas_price < toscalar(gas_history | project p75_fast), "High",
+            "Very High"
+        ),
+        standard_category = case(
+            standard_gas_price < toscalar(gas_history | project p25_fast), "Very Low",
+            standard_gas_price < toscalar(gas_history | project avg_fast_24h) * 0.8, "Low", 
+            standard_gas_price < toscalar(gas_history | project avg_fast_24h) * 1.1, "Medium",
+            standard_gas_price < toscalar(gas_history | project p75_fast), "High",
+            "Very High"
+        ),
+        fast_category = case(
+            fast_gas_price < toscalar(gas_history | project p25_fast), "Very Low",
+            fast_gas_price < toscalar(gas_history | project avg_fast_24h) * 0.9, "Low",
+            fast_gas_price < toscalar(gas_history | project avg_fast_24h) * 1.2, "Medium", 
+            fast_gas_price < toscalar(gas_history | project p75_fast), "High",
+            "Very High"
+        ),
+        recommendation = case(
+            fast_gas_price < toscalar(gas_history | project p25_fast), "Great time for transactions!",
+            fast_gas_price < toscalar(gas_history | project avg_fast_24h), "Good time for transactions",
+            fast_gas_price < toscalar(gas_history | project p75_fast), "Average gas prices",
+            fast_gas_price < toscalar(gas_history | project p75_fast) * 1.5, "High gas - consider waiting",
+            "Very high gas - wait if possible"
+        )
+    | project 
+        timestamp,
+        safe_gas_price,
+        standard_gas_price, 
+        fast_gas_price,
+        safe_category,
+        standard_category,
+        fast_category,
+        recommendation
+}
+
+// Function to detect gas price spikes
+.create-or-alter function DetectGasSpikes(
+    spike_threshold_multiplier: real = 2.0,
+    baseline_hours: int = 24
+) {
+    let baseline = 
+        eth_gas_raw
+        | where timestamp between (ago(baseline_hours * 1h + 1h) .. ago(1h))
+        | summarize 
+            baseline_avg = avg(fast_gas_price),
+            baseline_std = stdev(fast_gas_price);
+    let spike_threshold = toscalar(baseline | project baseline_avg * spike_threshold_multiplier);
+    eth_gas_raw
+    | where timestamp >= ago(1h)
+    | where fast_gas_price >= spike_threshold
+    | extend 
+        baseline_avg = toscalar(baseline | project baseline_avg),
+        spike_multiplier = fast_gas_price / toscalar(baseline | project baseline_avg),
+        spike_severity = case(
+            spike_multiplier >= 5, "Extreme",
+            spike_multiplier >= 3, "Severe", 
+            spike_multiplier >= 2, "Moderate",
+            "Minor"
+        )
+    | project 
+        timestamp,
+        fast_gas_price,
+        baseline_avg = round(baseline_avg, 2),
+        spike_multiplier = round(spike_multiplier, 2),
+        spike_severity
+    | order by timestamp desc
+}
+
+// Function for gas price distribution analysis
+.create-or-alter function AnalyzeGasDistribution(hours_back: int = 24) {
+    eth_gas_raw
+    | where timestamp >= ago(hours_back * 1h)
+    | extend gas_bucket = case(
+        fast_gas_price < 20, "0-20 gwei",
+        fast_gas_price < 40, "20-40 gwei", 
+        fast_gas_price < 60, "40-60 gwei",
+        fast_gas_price < 100, "60-100 gwei",
+        fast_gas_price < 200, "100-200 gwei",
+        "200+ gwei"
+    )
+    | summarize 
+        count = count(),
+        avg_gas = avg(fast_gas_price)
+    by gas_bucket
+    | extend percentage = round(count * 100.0 / sum(count), 2)
+    | order by avg_gas asc
+}
